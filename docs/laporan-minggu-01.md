@@ -57,7 +57,7 @@ Pekerjaan Minggu 1 berada pada **lapisan perangkat (device layer)** dari arsitek
 
 DHT22 berperan sebagai sensor validasi alur akuisisi data pada Minggu 1. Sensor utama proyek (pH 6,5 sampai 8,5 dan turbidity) serta aktuator servo pakan ditambahkan pada fase berikutnya di atas kerangka yang sama. LED dan tombol merupakan prototipe peringatan lokal yang kelak dipetakan ke buzzer dan LED alert.
 
-![Skema Rangkaian](docs/lampiran/minggu1_rangkaian.png)
+![Skema Rangkaian](lampiran/minggu1_rangkaian.png)
 
 ### 3.2 Rancangan Firmware
 Firmware (`firmware/src/main.cpp`) dirancang sepenuhnya non-blocking:
@@ -93,7 +93,7 @@ Firmware (`firmware/src/main.cpp`) dirancang sepenuhnya non-blocking:
 - Perubahan nilai DHT22 pada simulator langsung tercermin pada `temp_c` dan `hum_pct` di JSON berikutnya.
 - Penekanan tombol mengubah `alert` antara `true` dan `false`, dan LED berkedip saat `alert` bernilai `true`.
 
-![Hasil  Simulasi](docs/lampiran/minggu1-hasil-simulasi.png)
+![Hasil  Simulasi](lampiran/minggu1-hasil-simulasi.png)
 
 ### 4.2 Eksperimen Blocking vs Non-blocking
 Latensi diukur oleh firmware (selisih waktu tekan pada interrupt dan waktu pemrosesan), dalam milidetik waktu simulasi. Pengambilan data dilakukan sebanyak 10 kali tekan untuk tiap mode.
@@ -105,9 +105,9 @@ Latensi diukur oleh firmware (selisih waktu tekan pada interrupt dan waktu pemro
 | Non-blocking | 35, 0, 0, 0, 2, 0, 2, 67, 0, 1 |
 | Blocking | 3436, 4024, 4019, 2005, 12081, 4023, 1735, 2009, 4023, 2005 |
 
-![Non Blocking](docs/lampiran/minggu1-non-blocking.png)
+![Non Blocking](lampiran/minggu1-non-blocking.png)
 
-![Blocking](docs/lampiran/minggu1-blocking.png)
+![Blocking](lampiran/minggu1-blocking.png)
 
 **Ringkasan**
 
