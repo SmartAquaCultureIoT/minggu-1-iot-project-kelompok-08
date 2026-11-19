@@ -1,90 +1,116 @@
 #include <Arduino.h>
+#include <DHT.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
 
-// Definisi Pin
-#define PH_PIN 34
-#define TURBIDITY_PIN 35
-#define SERVO_PIN 18
-#define BUTTON_PIN 4
-#define LED_PIN 2
+#define DHT_PIN   4
+#define LED_PIN   2
+#define BTN_PIN   15
+#define DHT_TYPE  DHT22
 
-Servo servoPakan;
-unsigned long previousMillis = 0;
-const long interval = 2000; // Interval telemetri JSON 2 detik
+#define USE_BLOCKING 0
+
+const char* DEVICE_ID = "esp32-unib-node01";
+const unsigned long SENSOR_INTERVAL_MS = 2000;
+const unsigned long BLINK_INTERVAL_MS  = 250;
+const unsigned long DEBOUNCE_MS        = 50;
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+unsigned long lastSensorMs   = 0;
+unsigned long lastBlinkMs    = 0;
+unsigned long lastDebounceMs = 0;
 uint32_t seq = 0;
 
-// Variabel status tombol (Non-blocking debouncing)
-bool lastButtonState = HIGH;
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
+bool alertActive = false;
+bool ledState    = false;
+int  btnStable   = HIGH;
+
+volatile unsigned long pressIsrMs   = 0;
+volatile bool           pressPending = false;
+
+void IRAM_ATTR onBtnPress() {
+  if (!pressPending) {
+    pressIsrMs = millis();
+    pressPending = true;
+  }
+}
+
+void publishTelemetry() {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  if (isnan(t) || isnan(h)) {
+    Serial.println("{\"error\":\"dht_read_failed\"}");
+    return;
+  }
+
+  JsonDocument doc;
+  doc["device_id"] = DEVICE_ID;
+  doc["seq"]       = ++seq;
+  doc["uptime_ms"] = millis();
+  doc["mode"]      = USE_BLOCKING ? "blocking" : "non-blocking";
+  doc["temp_c"]    = serialized(String(t, 2));
+  doc["hum_pct"]   = serialized(String(h, 2));
+  doc["alert"]     = alertActive;
+
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void handleButton() {
+  int reading = digitalRead(BTN_PIN);
+
+  if (reading != btnStable && (millis() - lastDebounceMs) > DEBOUNCE_MS) {
+    btnStable = reading;
+    lastDebounceMs = millis();
+
+    if (btnStable == LOW) {
+      alertActive = !alertActive;
+      unsigned long latency = pressPending ? (millis() - pressIsrMs) : 0;
+      Serial.printf("[BTN] alert=%s | latensi=%lu ms\r\n",
+                    alertActive ? "true" : "false", latency);
+      pressPending = false;
+    } else {
+      pressPending = false;
+    }
+  }
+}
+
+void updateLed() {
+  if (!alertActive) {
+    ledState = false;
+  } else if (millis() - lastBlinkMs >= BLINK_INTERVAL_MS) {
+    lastBlinkMs = millis();
+    ledState = !ledState;
+  }
+  digitalWrite(LED_PIN, ledState);
+}
 
 void setup() {
   Serial.begin(115200);
-  
-  pinMode(PH_PIN, INPUT);
-  pinMode(TURBIDITY_PIN, INPUT);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
-  
-  servoPakan.attach(SERVO_PIN);
-  servoPakan.write(0); // Posisi awal wadah pakan tertutup
-  
-  Serial.println("Sistem Smart Aquaculture Bengkulu Dimulai...");
+  pinMode(BTN_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BTN_PIN), onBtnPress, FALLING);
+  dht.begin();
+
+  Serial.printf("Boot: %s | mode=%s\r\n", DEVICE_ID,
+                USE_BLOCKING ? "blocking" : "non-blocking");
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
+#if USE_BLOCKING
+  handleButton();
+  updateLed();
+  publishTelemetry();
+  delay(SENSOR_INTERVAL_MS);
+#else
+  handleButton();
+  updateLed();
 
-  // 1. Eksekusi Tombol Manual (Pembuktian Non-Blocking Instan)
-  bool reading = digitalRead(BUTTON_PIN);
-  if (reading != lastButtonState) {
-    lastDebounceTime = currentMillis;
+  unsigned long now = millis();
+  if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
+    lastSensorMs = now;
+    publishTelemetry();
   }
-  
-  if ((currentMillis - lastDebounceTime) > debounceDelay) {
-    if (reading == LOW) { // Tombol ditekan
-      servoPakan.write(90); // Buka wadah pakan
-      Serial.println("Pakan manual diberikan! (Respons instan tanpa terhalang delay)");
-    } else {
-      servoPakan.write(0);  // Tutup kembali
-    }
-  }
-  lastButtonState = reading;
-
-  // 2. Serialisasi JSON & Telemetri Kualitas Air setiap 2 detik
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    seq++;
-
-    // Membaca sensor (Simulasi Potensiometer 0-4095)
-    int raw_ph = analogRead(PH_PIN);
-    int raw_turbidity = analogRead(TURBIDITY_PIN);
-
-    // Konversi nilai ADC ke satuan nyata
-    float ph_value = (raw_ph / 4095.0) * 14.0; // Rentang pH 0-14
-    float turbidity_ntu = (raw_turbidity / 4095.0) * 1000.0; // Misal rentang 0-1000 NTU
-
-    // Logika bisnis peringatan (Air Bahaya)
-    bool alertStatus = false;
-    if (ph_value < 6.5 || ph_value > 8.5 || turbidity_ntu > 400.0) {
-      alertStatus = true;
-      digitalWrite(LED_PIN, HIGH); // Nyalakan LED peringatan
-    } else {
-      digitalWrite(LED_PIN, LOW);
-    }
-
-    // Membangun Payload JSON Standar
-    StaticJsonDocument<256> doc;
-    doc["device_id"] = "ESP32_AQUA_BKL_01";
-    doc["seq"] = seq;
-    doc["uptime_ms"] = currentMillis;
-    doc["ph_value"] = ph_value;
-    doc["turbidity_ntu"] = turbidity_ntu;
-    doc["alert"] = alertStatus;
-
-    // Output JSON telemetri pada Serial Monitor
-    serializeJson(doc, Serial);
-    Serial.println();
-  }
+#endif
 }
